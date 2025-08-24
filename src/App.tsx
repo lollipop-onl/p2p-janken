@@ -44,6 +44,9 @@ export const App = () => {
   const [iceCandidates, setIceCandidates] = useState<RTCIceCandidate[]>([]);
   const [isGatheringComplete, setIsGatheringComplete] =
     useState<boolean>(false);
+  const [offerUrl, setOfferUrl] = useState<string>("");
+  const [answerUrl, setAnswerUrl] = useState<string>("");
+  const [copyStatus, setCopyStatus] = useState<string>("");
 
   const peerConnection = useRef<RTCPeerConnection | null>(null);
   const dataChannel = useRef<RTCDataChannel | null>(null);
@@ -142,21 +145,27 @@ export const App = () => {
   const handleMessage = (data: any) => {
     switch (data.type) {
       case "handSelected":
-        setGameState((prev) => ({
-          ...prev,
-          opponentHand: data.hand,
-          gameId: data.gameId,
-        }));
-
-        if (gameState.myHand) {
-          const result = determineWinner(gameState.myHand, data.hand);
-          setGameState((prev) => ({
+        setGameState((prev) => {
+          const newState = {
             ...prev,
-            result,
             opponentHand: data.hand,
-          }));
-          setIsWaiting(false);
-        }
+            gameId: data.gameId,
+          };
+
+          // 両方の手が揃ったら勝敗判定
+          if (newState.myHand && data.hand) {
+            const result = determineWinner(newState.myHand, data.hand);
+            return {
+              ...newState,
+              result,
+            };
+          }
+
+          return newState;
+        });
+
+        // 待機状態を解除
+        setIsWaiting(false);
         break;
 
       case "newGame":
@@ -183,12 +192,6 @@ export const App = () => {
     if (!hand || gameState.myHand || connectionState !== "connected") return;
 
     const gameId = Date.now().toString();
-    setGameState((prev) => ({
-      ...prev,
-      myHand: hand,
-      gameId,
-    }));
-    setIsWaiting(true);
 
     sendMessage({
       type: "handSelected",
@@ -196,13 +199,28 @@ export const App = () => {
       gameId,
     });
 
-    if (gameState.opponentHand) {
-      const result = determineWinner(hand, gameState.opponentHand);
-      setGameState((prev) => ({
+    setGameState((prev) => {
+      const newState = {
         ...prev,
-        result,
-      }));
-      setIsWaiting(false);
+        myHand: hand,
+        gameId,
+      };
+
+      // 相手がすでに選択済みの場合は即座に勝敗判定
+      if (prev.opponentHand) {
+        const result = determineWinner(hand, prev.opponentHand);
+        return {
+          ...newState,
+          result,
+        };
+      }
+
+      return newState;
+    });
+
+    // 相手がまだ選択していない場合のみ待機状態に
+    if (!gameState.opponentHand) {
+      setIsWaiting(true);
     }
   };
 
@@ -222,6 +240,9 @@ export const App = () => {
   };
 
   const createRoom = async () => {
+    // Clear URL parameters
+    window.history.replaceState({}, "", window.location.pathname);
+
     const newRoomId = Math.random().toString(36).substring(2, 8);
     setRoomId(newRoomId);
     setIsHost(true);
@@ -245,13 +266,110 @@ export const App = () => {
         sdp: peerConnection.current.localDescription,
         candidates: iceCandidates,
       };
+
+      const url = generateOfferUrl(connectionData);
+      setOfferUrl(url);
+
+      console.log("=== OFFER URL GENERATED ===");
+      console.log(url);
       console.log("=== COPY THIS OFFER ===");
       console.log(JSON.stringify(connectionData));
       console.log("======================");
     }
   }, [isHost, isGatheringComplete, iceCandidates]);
 
+  // ゲスト側のICE gathering完了時にAnswerを表示
+  useEffect(() => {
+    if (
+      !isHost &&
+      isGatheringComplete &&
+      peerConnection.current?.localDescription
+    ) {
+      const connectionData: ConnectionData = {
+        sdp: peerConnection.current.localDescription,
+        candidates: iceCandidates,
+      };
+
+      const url = generateAnswerUrl(connectionData);
+      setAnswerUrl(url);
+
+      console.log("=== ANSWER URL GENERATED ===");
+      console.log(url);
+      console.log("=== COPY THIS ANSWER ===");
+      console.log(JSON.stringify(connectionData));
+      console.log("========================");
+    }
+  }, [isHost, isGatheringComplete, iceCandidates]);
+
+  const handleOfferFromUrl = async (offerData: string) => {
+    try {
+      const connectionData: ConnectionData = JSON.parse(
+        decodeURIComponent(offerData)
+      );
+      setIsHost(false);
+      setConnectionState("connecting");
+      setRoomId("url-shared");
+
+      initializePeerConnection();
+      await createAnswer(connectionData);
+
+      console.log("Offer received from URL, generating answer...");
+    } catch (error) {
+      console.error("Invalid offer in URL:", error);
+    }
+  };
+
+  const handleAnswerFromUrl = async (answerData: string) => {
+    try {
+      const connectionData: ConnectionData = JSON.parse(
+        decodeURIComponent(answerData)
+      );
+
+      if (peerConnection.current) {
+        await peerConnection.current.setRemoteDescription(connectionData.sdp);
+
+        for (const candidate of connectionData.candidates) {
+          try {
+            await peerConnection.current.addIceCandidate(candidate);
+          } catch (error) {
+            console.error("Error adding ICE candidate:", error);
+          }
+        }
+        console.log("Answer received from URL, connection should establish");
+      }
+    } catch (error) {
+      console.error("Invalid answer in URL:", error);
+    }
+  };
+
+  const generateOfferUrl = (connectionData: ConnectionData) => {
+    const baseUrl = window.location.origin + window.location.pathname;
+    const encodedOffer = encodeURIComponent(JSON.stringify(connectionData));
+    return `${baseUrl}?offer=${encodedOffer}`;
+  };
+
+  const generateAnswerUrl = (connectionData: ConnectionData) => {
+    const baseUrl = window.location.origin + window.location.pathname;
+    const encodedAnswer = encodeURIComponent(JSON.stringify(connectionData));
+    return `${baseUrl}?answer=${encodedAnswer}`;
+  };
+
+  const copyToClipboard = async (text: string, type: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopyStatus(`${type}をコピーしました！`);
+      setTimeout(() => setCopyStatus(""), 2000);
+    } catch (error) {
+      console.error("Failed to copy:", error);
+      setCopyStatus("コピーに失敗しました");
+      setTimeout(() => setCopyStatus(""), 2000);
+    }
+  };
+
   const joinRoom = async () => {
+    // Clear URL parameters
+    window.history.replaceState({}, "", window.location.pathname);
+
     if (!roomId) return;
 
     setIsHost(false);
@@ -272,23 +390,6 @@ export const App = () => {
     }
   };
 
-  // ゲスト側のICE gathering完了時にAnswerを表示
-  useEffect(() => {
-    if (
-      !isHost &&
-      isGatheringComplete &&
-      peerConnection.current?.localDescription
-    ) {
-      const connectionData: ConnectionData = {
-        sdp: peerConnection.current.localDescription,
-        candidates: iceCandidates,
-      };
-      console.log("=== COPY THIS ANSWER ===");
-      console.log(JSON.stringify(connectionData));
-      console.log("========================");
-    }
-  }, [isHost, isGatheringComplete, iceCandidates]);
-
   const handleAnswerSubmit = async () => {
     const answerText = prompt("Paste the answer from the guest:");
     if (!answerText || !peerConnection.current) return;
@@ -296,10 +397,8 @@ export const App = () => {
     try {
       const connectionData: ConnectionData = JSON.parse(answerText);
 
-      // リモート記述を設定
       await peerConnection.current.setRemoteDescription(connectionData.sdp);
 
-      // ICE候補を追加
       for (const candidate of connectionData.candidates) {
         try {
           await peerConnection.current.addIceCandidate(candidate);
@@ -314,12 +413,34 @@ export const App = () => {
     }
   };
 
+  // URLパラメータから初期データを取得
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const offerData = urlParams.get("offer");
+    const answerData = urlParams.get("answer");
+
+    if (offerData) {
+      // Offerが含まれているURL - ゲストとして自動参加
+      handleOfferFromUrl(offerData);
+    } else if (answerData) {
+      // Answerが含まれているURL - ホストとして自動処理
+      handleAnswerFromUrl(answerData);
+    }
+  }, []);
+
   return (
     <div className="min-h-screen bg-gray-100 p-8">
       <div className="max-w-md mx-auto bg-white rounded-lg shadow-lg p-6">
         <h1 className="text-2xl font-bold text-center mb-6">
           🪨📄✂️ P2P じゃんけん
         </h1>
+
+        {/* コピー状態表示 */}
+        {copyStatus && (
+          <div className="mb-4 p-2 bg-green-100 border border-green-300 rounded text-green-700 text-sm text-center">
+            {copyStatus}
+          </div>
+        )}
 
         {/* ルームID表示 */}
         {roomId && (
@@ -336,7 +457,7 @@ export const App = () => {
             {/* 手順説明 */}
             <div className="mb-6 p-4 bg-gray-50 border border-gray-200 rounded-lg">
               <h2 className="text-lg font-semibold mb-3 text-gray-800">
-                📋 接続手順
+                📋 接続手順（簡単モード！）
               </h2>
               <div className="space-y-3 text-sm text-gray-700">
                 <div>
@@ -345,9 +466,9 @@ export const App = () => {
                   </p>
                   <ol className="list-decimal list-inside ml-4 space-y-1">
                     <li>「ルーム作成」ボタンを押す</li>
-                    <li>コンソールに表示される完全なOfferをコピー</li>
-                    <li>相手にOfferを送信</li>
-                    <li>相手から受け取った完全なAnswerを入力</li>
+                    <li>生成されたURLをコピーして相手に送信</li>
+                    <li>相手がそのURLにアクセス</li>
+                    <li>相手のURLをクリックするだけ！</li>
                   </ol>
                 </div>
                 <div>
@@ -355,16 +476,15 @@ export const App = () => {
                     🚪 ルーム参加の場合:
                   </p>
                   <ol className="list-decimal list-inside ml-4 space-y-1">
-                    <li>ルームIDを入力（任意）</li>
-                    <li>「ルーム参加」ボタンを押す</li>
-                    <li>ホストからの完全なOfferを貼り付け</li>
-                    <li>コンソールの完全なAnswerをホストに送信</li>
+                    <li>ホストから送られてきたURLをクリック</li>
+                    <li>自動で接続が始まります</li>
+                    <li>生成されたURLをホストに送信</li>
+                    <li>完了！</li>
                   </ol>
                 </div>
-                <div className="mt-3 p-2 bg-yellow-50 border border-yellow-200 rounded">
-                  <p className="text-xs text-yellow-700">
-                    💡 ヒント:
-                    ICE候補収集完了まで少し待ってからコピーしてください
+                <div className="mt-3 p-2 bg-green-50 border border-green-200 rounded">
+                  <p className="text-xs text-green-700">
+                    ✨ 新機能: URLを使えばコピペが最小限に！
                   </p>
                 </div>
               </div>
@@ -390,7 +510,7 @@ export const App = () => {
                 onClick={joinRoom}
                 className="flex-1 bg-green-500 text-white p-2 rounded hover:bg-green-600"
               >
-                ルーム参加
+                手動参加
               </button>
             </div>
           </div>
@@ -402,38 +522,79 @@ export const App = () => {
             {isHost ? (
               <div className="space-y-3">
                 <div className="p-3 bg-orange-50 border border-orange-200 rounded-lg text-sm text-orange-700">
-                  <p className="font-medium mb-2">📤 次のステップ:</p>
-                  <ol className="list-decimal list-inside space-y-1">
-                    <li>ICE候補収集完了を待つ</li>
-                    <li>コンソールの完全なOfferを相手に送信</li>
-                    <li>相手から完全なAnswerを受け取る</li>
-                    <li>下のボタンでAnswerを入力</li>
-                  </ol>
+                  <p className="font-medium mb-2">📤 ステップ 1/2:</p>
                   {isGatheringComplete ? (
-                    <p className="text-green-600 mt-2">✅ ICE候補収集完了</p>
+                    <div className="space-y-3">
+                      <p className="text-green-600">✅ 接続準備完了！</p>
+                      <p>下のURLを相手に送信してください：</p>
+                      <div className="bg-white p-2 rounded border break-all text-xs font-mono">
+                        {offerUrl}
+                      </div>
+                      <button
+                        onClick={() => copyToClipboard(offerUrl, "接続URL")}
+                        className="w-full bg-blue-500 text-white p-2 rounded hover:bg-blue-600"
+                      >
+                        📋 URLをコピー
+                      </button>
+                      <div className="border-t pt-3 mt-3">
+                        <p className="mb-2">従来方式（手動入力）:</p>
+                        <button
+                          onClick={handleAnswerSubmit}
+                          className="w-full bg-orange-500 text-white p-2 rounded hover:bg-orange-600"
+                        >
+                          相手の応答を手動入力
+                        </button>
+                      </div>
+                    </div>
                   ) : (
-                    <p className="text-yellow-600 mt-2">⏳ ICE候補収集中...</p>
+                    <p className="text-yellow-600">⏳ 接続準備中...</p>
                   )}
                 </div>
-                <button
-                  onClick={handleAnswerSubmit}
-                  className="bg-orange-500 text-white p-2 rounded hover:bg-orange-600"
-                  disabled={!isGatheringComplete}
-                >
-                  相手の応答を入力
-                </button>
               </div>
             ) : (
-              <div className="p-3 bg-green-50 border border-green-200 rounded-lg text-sm text-green-700">
-                <p className="font-medium mb-2">📥 次のステップ:</p>
-                <p>
-                  ICE候補収集完了後、コンソールの完全なAnswerをホストに送信してください
-                </p>
-                {isGatheringComplete ? (
-                  <p className="text-green-600 mt-2">✅ ICE候補収集完了</p>
-                ) : (
-                  <p className="text-yellow-600 mt-2">⏳ ICE候補収集中...</p>
-                )}
+              <div className="space-y-3">
+                <div className="p-3 bg-green-50 border border-green-200 rounded-lg text-sm text-green-700">
+                  <p className="font-medium mb-2">📥 ステップ 2/2:</p>
+                  {isGatheringComplete ? (
+                    <div className="space-y-3">
+                      <p className="text-green-600">✅ 応答準備完了！</p>
+                      <p>下のURLをホストに送信してください：</p>
+                      <div className="bg-white p-2 rounded border break-all text-xs font-mono">
+                        {answerUrl}
+                      </div>
+                      <button
+                        onClick={() => copyToClipboard(answerUrl, "応答URL")}
+                        className="w-full bg-blue-500 text-white p-2 rounded hover:bg-blue-600"
+                      >
+                        📋 URLをコピー
+                      </button>
+                      <div className="border-t pt-3 mt-3">
+                        <p className="mb-2 text-xs">
+                          従来方式（Answerデータのみ）:
+                        </p>
+                        <button
+                          onClick={() => {
+                            if (peerConnection.current?.localDescription) {
+                              const connectionData: ConnectionData = {
+                                sdp: peerConnection.current.localDescription,
+                                candidates: iceCandidates,
+                              };
+                              copyToClipboard(
+                                JSON.stringify(connectionData),
+                                "Answerデータ"
+                              );
+                            }
+                          }}
+                          className="w-full bg-gray-500 text-white p-2 rounded hover:bg-gray-600 text-sm"
+                        >
+                          📋 Answerデータをコピー
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="text-yellow-600">⏳ 応答準備中...</p>
+                  )}
+                </div>
               </div>
             )}
           </div>
@@ -508,12 +669,18 @@ export const App = () => {
                           ? "😢 敗北..."
                           : "🤝 引き分け"}
                       </div>
-                      <button
-                        onClick={startNewGame}
-                        className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600"
-                      >
-                        もう一度
-                      </button>
+                      {isHost ? (
+                        <button
+                          onClick={startNewGame}
+                          className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600"
+                        >
+                          もう一度
+                        </button>
+                      ) : (
+                        <div className="text-gray-600 text-sm">
+                          ホストが次のゲームを開始するまでお待ちください...
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
