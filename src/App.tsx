@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { QRCodeSVG } from "qrcode.react";
-import { Scanner } from "@yudiel/react-qr-scanner";
+import { BrowserMultiFormatReader } from "@zxing/browser";
 import * as pako from "pako";
 
 type Hand = "rock" | "paper" | "scissors" | null;
@@ -51,6 +51,8 @@ export const App = () => {
   const [answerUrl, setAnswerUrl] = useState<string>("");
   const [copyStatus, setCopyStatus] = useState<string>("");
   const [showQrScanner, setShowQrScanner] = useState<boolean>(false);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const readerRef = useRef<BrowserMultiFormatReader | null>(null);
 
   const peerConnection = useRef<RTCPeerConnection | null>(null);
   const dataChannel = useRef<RTCDataChannel | null>(null);
@@ -453,6 +455,66 @@ export const App = () => {
     }
   }, []);
 
+  // QRスキャナーの開始
+  const startQrScanner = async () => {
+    try {
+      if (!readerRef.current) {
+        readerRef.current = new BrowserMultiFormatReader();
+      }
+      
+      const videoInputDevices = await readerRef.current.listVideoInputDevices();
+      const backCamera = videoInputDevices.find(device => 
+        device.label.toLowerCase().includes('back') || 
+        device.label.toLowerCase().includes('rear')
+      ) || videoInputDevices[0];
+
+      if (videoRef.current) {
+        readerRef.current.decodeFromVideoDevice(
+          backCamera?.deviceId,
+          videoRef.current,
+          (result, error) => {
+            if (result) {
+              setShowQrScanner(false);
+              stopQrScanner();
+              
+              try {
+                const url = new URL(result.getText());
+                const answerData = url.searchParams.get("answer");
+                if (answerData) {
+                  handleAnswerFromUrl(answerData);
+                } else {
+                  alert("有効なAnswerQRコードではありません");
+                }
+              } catch (urlError) {
+                alert("有効なURLではありません");
+              }
+            }
+            if (error && error.name !== 'NotFoundException') {
+              console.error('QR scan error:', error);
+            }
+          }
+        );
+      }
+    } catch (error) {
+      console.error('Failed to start QR scanner:', error);
+      alert('カメラの起動に失敗しました');
+    }
+  };
+
+  // QRスキャナーの停止
+  const stopQrScanner = () => {
+    if (readerRef.current) {
+      readerRef.current.reset();
+    }
+  };
+
+  // コンポーネントのクリーンアップ
+  useEffect(() => {
+    return () => {
+      stopQrScanner();
+    };
+  }, []);
+
   return (
     <div className="min-h-screen bg-gray-100 p-8">
       <div className="max-w-md mx-auto bg-white rounded-lg shadow-lg p-6">
@@ -489,7 +551,7 @@ export const App = () => {
                   <p className="font-medium text-blue-600">
                     🏠 ルーム作成の場合:
                   </p>
-                  <ol className="list-decimal list-inside ml-4 space-y-1">
+                  <ol className="list-decimal list-inside ml-4 space-y-1"></ol>
                     <li>「ルーム作成」ボタンを押す</li>
                     <li>生成されたURLをコピーして相手に送信</li>
                     <li>相手がそのURLにアクセス</li>
@@ -588,49 +650,41 @@ export const App = () => {
                         </p>
                         {!showQrScanner ? (
                           <button
-                            onClick={() => setShowQrScanner(true)}
+                            onClick={() => {
+                              setShowQrScanner(true);
+                              startQrScanner();
+                            }}
                             className="w-full bg-green-500 text-white p-2 rounded hover:bg-green-600"
                           >
                             📷 QRスキャナーを開く
                           </button>
                         ) : (
                           <div className="space-y-3">
-                            <div className="relative">
-                              <Scanner
-                                onResult={(result) => {
-                                  if (result) {
-                                    setShowQrScanner(false);
-                                    // Answer URLかどうかチェック
-                                    const url = new URL(result);
-                                    const answerData =
-                                      url.searchParams.get("answer");
-                                    if (answerData) {
-                                      handleAnswerFromUrl(answerData);
-                                    } else {
-                                      alert(
-                                        "有効なAnswerQRコードではありません"
-                                      );
-                                    }
-                                  }
+                            <div className="relative bg-black rounded overflow-hidden">
+                              <video
+                                ref={videoRef}
+                                style={{
+                                  width: "100%",
+                                  maxWidth: "300px",
+                                  height: "200px",
+                                  objectFit: "cover",
                                 }}
-                                onError={(error) => {
-                                  console.error("QR scan error:", error);
-                                }}
-                                constraints={{
-                                  facingMode: "environment",
-                                }}
-                                styles={{
-                                  container: {
-                                    width: "100%",
-                                    maxWidth: "300px",
-                                    height: "200px",
-                                    margin: "0 auto",
-                                  }
-                                }}
+                                autoPlay
+                                muted
+                                playsInline
                               />
+                              <div className="absolute inset-0 border-2 border-red-500 border-dashed pointer-events-none">
+                                <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-20 h-20 border-4 border-red-500"></div>
+                              </div>
                             </div>
+                            <p className="text-xs text-center text-gray-600">
+                              QRコードを枠内に合わせてください
+                            </p>
                             <button
-                              onClick={() => setShowQrScanner(false)}
+                              onClick={() => {
+                                setShowQrScanner(false);
+                                stopQrScanner();
+                              }}
                               className="w-full bg-gray-500 text-white p-2 rounded hover:bg-gray-600"
                             >
                               スキャナーを閉じる
