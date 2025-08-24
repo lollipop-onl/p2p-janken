@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { QRCodeSVG } from "qrcode.react";
+import { Scanner } from "@yudiel/react-qr-scanner";
 import * as pako from "pako";
 
 type Hand = "rock" | "paper" | "scissors" | null;
@@ -49,6 +50,7 @@ export const App = () => {
   const [offerUrl, setOfferUrl] = useState<string>("");
   const [answerUrl, setAnswerUrl] = useState<string>("");
   const [copyStatus, setCopyStatus] = useState<string>("");
+  const [showQrScanner, setShowQrScanner] = useState<boolean>(false);
 
   const peerConnection = useRef<RTCPeerConnection | null>(null);
   const dataChannel = useRef<RTCDataChannel | null>(null);
@@ -579,6 +581,64 @@ export const App = () => {
                         </div>
                       )}
 
+                      {/* QRスキャナー */}
+                      <div className="border-t pt-3">
+                        <p className="mb-2 text-center">
+                          📱 相手のAnswerQRをスキャン:
+                        </p>
+                        {!showQrScanner ? (
+                          <button
+                            onClick={() => setShowQrScanner(true)}
+                            className="w-full bg-green-500 text-white p-2 rounded hover:bg-green-600"
+                          >
+                            📷 QRスキャナーを開く
+                          </button>
+                        ) : (
+                          <div className="space-y-3">
+                            <div className="relative">
+                              <Scanner
+                                onResult={(result) => {
+                                  if (result) {
+                                    setShowQrScanner(false);
+                                    // Answer URLかどうかチェック
+                                    const url = new URL(result);
+                                    const answerData =
+                                      url.searchParams.get("answer");
+                                    if (answerData) {
+                                      handleAnswerFromUrl(answerData);
+                                    } else {
+                                      alert(
+                                        "有効なAnswerQRコードではありません"
+                                      );
+                                    }
+                                  }
+                                }}
+                                onError={(error) => {
+                                  console.error("QR scan error:", error);
+                                }}
+                                constraints={{
+                                  facingMode: "environment",
+                                }}
+                                styles={{
+                                  container: {
+                                    width: "100%",
+                                    maxWidth: "300px",
+                                    height: "200px",
+                                    margin: "0 auto",
+                                  }
+                                }}
+                              />
+                            </div>
+                            <button
+                              onClick={() => setShowQrScanner(false)}
+                              className="w-full bg-gray-500 text-white p-2 rounded hover:bg-gray-600"
+                            >
+                              スキャナーを閉じる
+                            </button>
+                          </div>
+                        )}
+                      </div>
+
                       <div className="border-t pt-3 mt-3">
                         <p className="mb-2">従来方式（手動入力）:</p>
                         <button
@@ -618,7 +678,27 @@ export const App = () => {
                   {isGatheringComplete ? (
                     <div className="space-y-3">
                       <p className="text-green-600">✅ 応答準備完了！</p>
-                      <p>下のURLをホストに送信してください：</p>
+
+                      {/* Answer QRコード表示 */}
+                      {answerUrl && (
+                        <div className="bg-white p-4 rounded border flex flex-col items-center">
+                          <p className="text-xs text-gray-600 mb-2">
+                            📱 ホストにこのQRを見せてスキャンしてもらう:
+                          </p>
+                          <QRCodeSVG
+                            value={answerUrl}
+                            size={256}
+                            level="M"
+                            includeMargin={true}
+                            className="border rounded"
+                          />
+                          <p className="mt-2 text-xs text-center text-gray-500">
+                            ホストがQRをスキャンすると自動接続されます
+                          </p>
+                        </div>
+                      )}
+
+                      <p>または、URLをホストに送信してください：</p>
                       <div className="bg-white p-2 rounded border break-all text-xs font-mono">
                         {answerUrl}
                       </div>
