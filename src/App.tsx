@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { QRCodeSVG } from "qrcode.react";
-import { BrowserMultiFormatReader } from "@zxing/browser";
+import { BrowserQRCodeReader } from "@zxing/browser";
 import * as pako from "pako";
 
 type Hand = "rock" | "paper" | "scissors" | null;
@@ -52,7 +52,7 @@ export const App = () => {
   const [copyStatus, setCopyStatus] = useState<string>("");
   const [showQrScanner, setShowQrScanner] = useState<boolean>(false);
   const videoRef = useRef<HTMLVideoElement>(null);
-  const readerRef = useRef<BrowserMultiFormatReader | null>(null);
+  const readerRef = useRef<BrowserQRCodeReader | null>(null);
 
   const peerConnection = useRef<RTCPeerConnection | null>(null);
   const dataChannel = useRef<RTCDataChannel | null>(null);
@@ -459,10 +459,11 @@ export const App = () => {
   const startQrScanner = async () => {
     try {
       if (!readerRef.current) {
-        readerRef.current = new BrowserMultiFormatReader();
+        readerRef.current = new BrowserQRCodeReader();
       }
 
-      const videoInputDevices = await readerRef.current.listVideoInputDevices();
+      const videoInputDevices =
+        await BrowserQRCodeReader.listVideoInputDevices();
       const backCamera =
         videoInputDevices.find(
           (device) =>
@@ -506,7 +507,7 @@ export const App = () => {
   // QRスキャナーの停止
   const stopQrScanner = () => {
     if (readerRef.current) {
-      readerRef.current.reset();
+      // readerRef.current.reset();
     }
   };
 
