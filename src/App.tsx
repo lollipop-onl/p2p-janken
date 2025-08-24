@@ -1,4 +1,6 @@
 import { useState, useRef, useEffect } from "react";
+import { QRCodeSVG } from "qrcode.react";
+import * as pako from "pako";
 
 type Hand = "rock" | "paper" | "scissors" | null;
 type GameResult = "win" | "lose" | "draw" | null;
@@ -303,9 +305,14 @@ export const App = () => {
 
   const handleOfferFromUrl = async (offerData: string) => {
     try {
-      const connectionData: ConnectionData = JSON.parse(
-        decodeURIComponent(offerData)
+      // Base64デコードしてpako展開
+      const base64Compressed = decodeURIComponent(offerData);
+      const compressed = Uint8Array.from(atob(base64Compressed), (c) =>
+        c.charCodeAt(0)
       );
+      const jsonString = pako.inflate(compressed, { to: "string" });
+      const connectionData: ConnectionData = JSON.parse(jsonString);
+
       setIsHost(false);
       setConnectionState("connecting");
       setRoomId("url-shared");
@@ -321,9 +328,13 @@ export const App = () => {
 
   const handleAnswerFromUrl = async (answerData: string) => {
     try {
-      const connectionData: ConnectionData = JSON.parse(
-        decodeURIComponent(answerData)
+      // Base64デコードしてpako展開
+      const base64Compressed = decodeURIComponent(answerData);
+      const compressed = Uint8Array.from(atob(base64Compressed), (c) =>
+        c.charCodeAt(0)
       );
+      const jsonString = pako.inflate(compressed, { to: "string" });
+      const connectionData: ConnectionData = JSON.parse(jsonString);
 
       if (peerConnection.current) {
         await peerConnection.current.setRemoteDescription(connectionData.sdp);
@@ -344,13 +355,25 @@ export const App = () => {
 
   const generateOfferUrl = (connectionData: ConnectionData) => {
     const baseUrl = window.location.origin + window.location.pathname;
-    const encodedOffer = encodeURIComponent(JSON.stringify(connectionData));
+    const jsonString = JSON.stringify(connectionData);
+
+    // pakoで圧縮してBase64エンコード
+    const compressed = pako.deflate(jsonString);
+    const base64Compressed = btoa(String.fromCharCode(...compressed));
+    const encodedOffer = encodeURIComponent(base64Compressed);
+
     return `${baseUrl}?offer=${encodedOffer}`;
   };
 
   const generateAnswerUrl = (connectionData: ConnectionData) => {
     const baseUrl = window.location.origin + window.location.pathname;
-    const encodedAnswer = encodeURIComponent(JSON.stringify(connectionData));
+    const jsonString = JSON.stringify(connectionData);
+
+    // pakoで圧縮してBase64エンコード
+    const compressed = pako.deflate(jsonString);
+    const base64Compressed = btoa(String.fromCharCode(...compressed));
+    const encodedAnswer = encodeURIComponent(base64Compressed);
+
     return `${baseUrl}?answer=${encodedAnswer}`;
   };
 
@@ -526,18 +549,55 @@ export const App = () => {
                   {isGatheringComplete ? (
                     <div className="space-y-3">
                       <p className="text-green-600">✅ 接続準備完了！</p>
-                      <p>下のURLを相手に送信してください：</p>
-                      <div className="bg-white p-2 rounded border break-all text-xs font-mono">
-                        {offerUrl}
-                      </div>
-                      <button
-                        onClick={() => copyToClipboard(offerUrl, "接続URL")}
-                        className="w-full bg-blue-500 text-white p-2 rounded hover:bg-blue-600"
-                      >
-                        📋 URLをコピー
-                      </button>
+
+                      {/* QRコード表示 */}
+                      {offerUrl && (
+                        <div className="bg-white p-4 rounded border flex flex-col items-center">
+                          <p className="text-xs text-gray-600 mb-2">
+                            📱 スマホでスキャン:
+                          </p>
+                          <QRCodeSVG
+                            value={offerUrl}
+                            size={256}
+                            level="M"
+                            includeMargin={true}
+                            className="border rounded"
+                          />
+
+                          <p className="mt-2 text-xs text-gray-500">
+                            または、以下のURLをコピーして相手に送信
+                          </p>
+                          <div className="bg-gray-100 p-2 rounded border break-all text-xs font-mono">
+                            {offerUrl}
+                          </div>
+                          <button
+                            onClick={() => copyToClipboard(offerUrl, "接続URL")}
+                            className="w-full bg-blue-500 text-white p-2 rounded hover:bg-blue-600 mt-2"
+                          >
+                            📋 URLをコピー
+                          </button>
+                        </div>
+                      )}
+
                       <div className="border-t pt-3 mt-3">
                         <p className="mb-2">従来方式（手動入力）:</p>
+                        <button
+                          onClick={() => {
+                            if (peerConnection.current?.localDescription) {
+                              const connectionData: ConnectionData = {
+                                sdp: peerConnection.current.localDescription,
+                                candidates: iceCandidates,
+                              };
+                              copyToClipboard(
+                                JSON.stringify(connectionData),
+                                "Offerデータ"
+                              );
+                            }
+                          }}
+                          className="w-full bg-gray-500 text-white p-2 rounded hover:bg-gray-600 text-sm mb-2"
+                        >
+                          📋 Offerデータをコピー
+                        </button>
                         <button
                           onClick={handleAnswerSubmit}
                           className="w-full bg-orange-500 text-white p-2 rounded hover:bg-orange-600"
