@@ -461,12 +461,14 @@ export const App = () => {
       if (!readerRef.current) {
         readerRef.current = new BrowserMultiFormatReader();
       }
-      
+
       const videoInputDevices = await readerRef.current.listVideoInputDevices();
-      const backCamera = videoInputDevices.find(device => 
-        device.label.toLowerCase().includes('back') || 
-        device.label.toLowerCase().includes('rear')
-      ) || videoInputDevices[0];
+      const backCamera =
+        videoInputDevices.find(
+          (device) =>
+            device.label.toLowerCase().includes("back") ||
+            device.label.toLowerCase().includes("rear")
+        ) || videoInputDevices[0];
 
       if (videoRef.current) {
         readerRef.current.decodeFromVideoDevice(
@@ -476,7 +478,7 @@ export const App = () => {
             if (result) {
               setShowQrScanner(false);
               stopQrScanner();
-              
+
               try {
                 const url = new URL(result.getText());
                 const answerData = url.searchParams.get("answer");
@@ -489,15 +491,15 @@ export const App = () => {
                 alert("有効なURLではありません");
               }
             }
-            if (error && error.name !== 'NotFoundException') {
-              console.error('QR scan error:', error);
+            if (error && error.name !== "NotFoundException") {
+              console.error("QR scan error:", error);
             }
           }
         );
       }
     } catch (error) {
-      console.error('Failed to start QR scanner:', error);
-      alert('カメラの起動に失敗しました');
+      console.error("Failed to start QR scanner:", error);
+      alert("カメラの起動に失敗しました");
     }
   };
 
@@ -551,7 +553,7 @@ export const App = () => {
                   <p className="font-medium text-blue-600">
                     🏠 ルーム作成の場合:
                   </p>
-                  <ol className="list-decimal list-inside ml-4 space-y-1"></ol>
+                  <ol className="list-decimal list-inside ml-4 space-y-1">
                     <li>「ルーム作成」ボタンを押す</li>
                     <li>生成されたURLをコピーして相手に送信</li>
                     <li>相手がそのURLにアクセス</li>
